@@ -7,7 +7,6 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 from statsmodels.tsa.arima.model import ARIMA
-import requests
 import io
 import warnings
 warnings.filterwarnings('ignore')
@@ -22,13 +21,6 @@ st.set_page_config(
 
 # Текстовые данные из документа (для дефолта) - выносим в отдельную переменную
 TEXT_DATA = """
-row3: ТГ-1,0.7328471198156682,0.8120683673469389,0.775663133640553,0.7069816666666666,0.6136569124423963,0.23684261904761905,0.5779423963133641,0,0,0,0,0,0.3691946281800391
-row4: ТГ-2,0.8102637096774193,0.944525,0.8871923963133641,0.3771666666666667,0.5168207373271889,0.28462190476190474,0.5132366359447005,0,0,0,0,0,0.3585021232876712
-row5: ТГ-3,0.3024148233486943,0.9418595238095238,0.6418884792626729,0.4908720634920635,0.3746497695852534,0.6992368253968254,0.6340451612903226,0,0,0,0,0,0.3359404892367906
-row6: ТГ-4,0.7797910497091485,0.057489510148321626,0.37599365415124275,0.8467934426229508,0.5802938921205711,0.7388691256830602,0.5944280803807509,0,0,0,0,0,0.3326720282206752
-row7: ТГ-5,0,0,0,0,0,0.00047583333333333337,0.0006647849462365591,0,0,0,0,0,0.00009557077625570777
-row8: ТГ-6,0.012135618279569892,0.0005714285714285714,0,0,0,0,0,0,0,0,0,0,0.0010745319634703197
-row9: ТГ-7,0.8838499999999999,0.9378366071428571,0.7883255376344086,0.38926083333333333,0.5079059139784946,0.2152377777777778,0,0,0,0,0,0,0.3067860502283105
 row12: ТГ-1,19083.339,19099.848,20198.268,17815.938,15979.626,5968.434,15049.62,,,,,,35
 row13: ТГ-2,21099.267,22215.228,23102.49,9504.6,13458.012,7172.472,13364.682,,,,,,35
 row14: ТГ-3,7874.882,22152.536,16714.776,12369.976,9755.88,17620.768,16510.536,,,,,,35
@@ -39,50 +31,14 @@ row18: ТГ-7,19727.532,18906.786,17595.426,8408.034,11336.46,4649.136,0,,,,,,30
 """
 
 months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
+hours_per_month = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744]
+hours_df = pd.DataFrame({'Месяц': months, 'Часы': hours_per_month})
 
 # Функция для парсинга данных из текстового представления
 def parse_data_from_text(text_data):
     lines = text_data.strip().split('\n')
-    
-    # Парсим строки с данными ТГ для КИУМ %: rows 3-9
-    tg_data = {}
-    for line in lines:
-        if ':' in line:
-            row_part = line.split(':')[0]
-            if row_part.startswith('row') and row_part[3:].isdigit():
-                row_num = int(row_part[3:])
-                if 3 <= row_num <= 9:
-                    content = line.split(':')[1].strip()
-                    parts = [p.strip() for p in content.split(',')]
-                    if len(parts) > 0 and parts[0].startswith('ТГ-'):
-                        tg = parts[0]
-                        values = []
-                        for i in range(1, 13):
-                            if i < len(parts):
-                                try:
-                                    values.append(float(parts[i]))
-                                except ValueError:
-                                    values.append(0.0)
-                            else:
-                                values.append(0.0)
-                        tg_data[tg] = {months[i]: values[i] for i in range(12)}
-                        if len(parts) > 13:
-                            tg_data[tg]['КИУМ_общий'] = float(parts[13])
-                        else:
-                            tg_data[tg]['КИУМ_общий'] = np.mean(values)
-    
-    # Создаем DataFrame для КИУМ
-    kium_data = []
-    for tg, data in tg_data.items():
-        row = {'ТГ': tg}
-        for month in months:
-            row[month] = data.get(month, 0)
-        row['КИУМ_общий'] = data.get('КИУМ_общий', np.mean([data.get(m,0) for m in months]))
-        kium_data.append(row)
-    kium_df = pd.DataFrame(kium_data)
-    
-    # Парсим выработку МВт*ч: rows 12-18
     generation_data = {}
+    
     for line in lines:
         if ':' in line:
             row_part = line.split(':')[0]
@@ -95,7 +51,7 @@ def parse_data_from_text(text_data):
                         tg = parts[0]
                         values = []
                         for i in range(1, 13):
-                            if i < len(parts):
+                            if i < len(parts) and parts[i] != '':
                                 try:
                                     values.append(float(parts[i]))
                                 except ValueError:
@@ -103,7 +59,7 @@ def parse_data_from_text(text_data):
                             else:
                                 values.append(0.0)
                         generation_data[tg] = {months[i]: values[i] for i in range(12)}
-                        if len(parts) > 13:
+                        if len(parts) > 13 and parts[13] != '':
                             generation_data[tg]['N_уст'] = float(parts[13])
                         else:
                             generation_data[tg]['N_уст'] = 0
@@ -118,9 +74,24 @@ def parse_data_from_text(text_data):
         gen_data.append(row)
     gen_df = pd.DataFrame(gen_data)
     
-    # Часы в месяцах
-    hours_per_month = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744]
-    hours_df = pd.DataFrame({'Месяц': months, 'Часы': hours_per_month})
+    # Рассчитываем КИУМ на основе выработки и N_уст
+    kium_data = []
+    for _, row in gen_df.iterrows():
+        monthly_kium = []
+        for month in months:
+            hours = hours_df.loc[hours_df['Месяц'] == month, 'Часы'].values[0]
+            if row['N_уст'] > 0 and hours > 0:
+                kium_val = row[month] / (row['N_уст'] * hours)
+                kium_val = max(0.0, min(1.0, kium_val))  # Ограничиваем [0, 1]
+            else:
+                kium_val = 0.0
+            monthly_kium.append(kium_val)
+        kium_data.append({
+            'ТГ': row['ТГ'],
+            **dict(zip(months, monthly_kium)),
+            'КИУМ_общий': np.mean(monthly_kium)
+        })
+    kium_df = pd.DataFrame(kium_data)
     
     return kium_df, gen_df, hours_df
 
@@ -313,17 +284,42 @@ with st.sidebar:
     
     if uploaded_file is not None:
         try:
-            kium_df = pd.read_excel(uploaded_file, sheet_name='2025', skiprows=1, nrows=7, usecols='A:N')
-            kium_df.columns = ['ТГ'] + months + ['КИУМ_общий']
-            gen_df = pd.read_excel(uploaded_file, sheet_name='2025', skiprows=10, nrows=7, usecols='A:N')
+            # Читаем оба диапазона
+            kium_raw = pd.read_excel(uploaded_file, sheet_name='2025', skiprows=1, nrows=7, usecols='A:N')
+            gen_raw = pd.read_excel(uploaded_file, sheet_name='2025', skiprows=10, nrows=7, usecols='A:N')
+            
+            # Проверяем структуру
+            if kium_raw.shape[1] < 14 or gen_raw.shape[1] < 14:
+                raise ValueError("Неверный формат файла: ожидается 14 столбцов (ТГ + 12 месяцев + N_уст/КИУМ_общий)")
+            
+            # Обработка выработки
+            gen_df = gen_raw.copy()
             gen_df.columns = ['ТГ'] + months + ['N_уст']
-            hours_per_month = [744, 672, 744, 720, 744, 720, 744, 744, 720, 744, 720, 744]
-            hours_df = pd.DataFrame({'Месяц': months, 'Часы': hours_per_month})
+            gen_df = gen_df.fillna(0)
+            
+            # Рассчитываем КИУМ из выработки
+            kium_data = []
+            for _, row in gen_df.iterrows():
+                monthly_kium = []
+                for month in months:
+                    hours = hours_df.loc[hours_df['Месяц'] == month, 'Часы'].values[0]
+                    if row['N_уст'] > 0 and hours > 0:
+                        kium_val = row[month] / (row['N_уст'] * hours)
+                        kium_val = max(0.0, min(1.0, kium_val))
+                    else:
+                        kium_val = 0.0
+                    monthly_kium.append(kium_val)
+                kium_data.append({
+                    'ТГ': row['ТГ'],
+                    **dict(zip(months, monthly_kium)),
+                    'КИУМ_общий': np.mean(monthly_kium)
+                })
+            kium_df = pd.DataFrame(kium_data)
             
             st.session_state.kium_df = kium_df
             st.session_state.gen_df = gen_df
             st.session_state.hours_df = hours_df
-            st.success("Данные успешно загружены")
+            st.success("Данные успешно загружены и КИУМ пересчитан")
         except Exception as e:
             st.error(f"Ошибка загрузки: {e}")
     
@@ -331,10 +327,11 @@ with st.sidebar:
     st.header("Фильтры")
     
     # Фильтры
+    all_tgs = st.session_state.kium_df['ТГ'].unique()
     selected_tgs = st.multiselect(
         "Выберите ТГ", 
-        st.session_state.kium_df['ТГ'].unique(), 
-        default=st.session_state.kium_df['ТГ'].unique(),
+        all_tgs, 
+        default=all_tgs,
         help="Выберите турбогенераторы для анализа"
     )
     
@@ -351,8 +348,12 @@ gen_df = st.session_state.gen_df
 hours_df = st.session_state.hours_df
 
 # Фильтрация данных
-filtered_kium = kium_df[kium_df['ТГ'].isin(selected_tgs)][['ТГ'] + selected_months + ['КИУМ_общий']]
-filtered_gen = gen_df[gen_df['ТГ'].isin(selected_tgs)][['ТГ'] + selected_months + ['N_уст']]
+if selected_tgs:
+    filtered_kium = kium_df[kium_df['ТГ'].isin(selected_tgs)][['ТГ'] + selected_months + ['КИУМ_общий']]
+    filtered_gen = gen_df[gen_df['ТГ'].isin(selected_tgs)][['ТГ'] + selected_months + ['N_уст']]
+else:
+    filtered_kium = kium_df[['ТГ'] + selected_months + ['КИУМ_общий']].iloc[0:0]
+    filtered_gen = gen_df[['ТГ'] + selected_months + ['N_уст']].iloc[0:0]
 
 # Навигация через вкладки
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -367,185 +368,205 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 with tab1:
     st.header("Коэффициент использования установленной мощности")
     
-    # Быстрые метрики
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        avg_kium = filtered_kium['КИУМ_общий'].mean()
-        st.metric("Средний КИУМ", f"{avg_kium:.2%}")
-    with col2:
-        max_kium = filtered_kium['КИУМ_общий'].max()
-        st.metric("Максимальный КИУМ", f"{max_kium:.2%}")
-    with col3:
-        min_kium = filtered_kium['КИУМ_общий'].min()
-        st.metric("Минимальный КИУМ", f"{min_kium:.2%}")
-    
-    # Данные и график в колонках
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Данные")
-        display_kium = filtered_kium.copy()
-        for month in selected_months:
-            display_kium[month] = display_kium[month].apply(lambda x: f"{x:.2%}")
-        display_kium['КИУМ_общий'] = display_kium['КИУМ_общий'].apply(lambda x: f"{x:.2%}")
+    if filtered_kium.empty:
+        st.warning("Нет данных для отображения. Выберите хотя бы один ТГ.")
+    else:
+        # Быстрые метрики
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            avg_kium = filtered_kium['КИУМ_общий'].mean()
+            st.metric("Средний КИУМ", f"{avg_kium:.2%}")
+        with col2:
+            max_kium = filtered_kium['КИУМ_общий'].max()
+            st.metric("Максимальный КИУМ", f"{max_kium:.2%}")
+        with col3:
+            min_kium = filtered_kium['КИУМ_общий'].min()
+            st.metric("Минимальный КИУМ", f"{min_kium:.2%}")
         
-        st.dataframe(display_kium, use_container_width=True)
+        # Данные и график в колонках
+        col1, col2 = st.columns([1, 2])
         
-        csv = filtered_kium.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Скачать CSV", 
-            csv, 
-            "kium_data.csv",
-            help="Скачать данные КИУМ в формате CSV"
-        )
-    
-    with col2:
-        st.subheader("Визуализация")
-        
-        # Выбор типа графика
-        chart_type = st.radio(
-            "Тип графика:",
-            ["Линейный", "Столбчатый", "Тепловая карта"],
-            horizontal=True
-        )
-        
-        if chart_type == "Линейный":
-            melted = filtered_kium.melt(id_vars=['ТГ'], value_vars=selected_months, 
-                                      var_name='Месяц', value_name='КИУМ')
-            fig = px.line(melted, x='Месяц', y='КИУМ', color='ТГ',
-                         title="Динамика КИУМ по месяцам")
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+        with col1:
+            st.subheader("Данные")
+            display_kium = filtered_kium.copy()
+            for month in selected_months:
+                display_kium[month] = display_kium[month].apply(lambda x: f"{x:.2%}")
+            display_kium['КИУМ_общий'] = display_kium['КИУМ_общий'].apply(lambda x: f"{x:.2%}")
             
-        elif chart_type == "Столбчатый":
-            fig = px.bar(filtered_kium, x='ТГ', y='КИУМ_общий',
-                        title="Общий КИУМ по ТГ")
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            st.dataframe(display_kium, use_container_width=True)
             
-        else:
-            fig = px.imshow(filtered_kium.set_index('ТГ')[selected_months].T, 
-                           color_continuous_scale='RdYlGn',
-                           title="Тепловая карта КИУМ")
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+            csv = filtered_kium.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Скачать CSV", 
+                csv, 
+                "kium_data.csv",
+                help="Скачать данные КИУМ в формате CSV"
+            )
+        
+        with col2:
+            st.subheader("Визуализация")
+            
+            # Выбор типа графика
+            chart_type = st.radio(
+                "Тип графика:",
+                ["Линейный", "Столбчатый", "Тепловая карта"],
+                horizontal=True
+            )
+            
+            if chart_type == "Линейный":
+                melted = filtered_kium.melt(id_vars=['ТГ'], value_vars=selected_months, 
+                                          var_name='Месяц', value_name='КИУМ')
+                fig = px.line(melted, x='Месяц', y='КИУМ', color='ТГ',
+                             title="Динамика КИУМ по месяцам")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+                
+            elif chart_type == "Столбчатый":
+                fig = px.bar(filtered_kium, x='ТГ', y='КИУМ_общий',
+                            title="Общий КИУМ по ТГ")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+                
+            else:
+                fig = px.imshow(filtered_kium.set_index('ТГ')[selected_months].T, 
+                               color_continuous_scale='RdYlGn_r',
+                               title="Тепловая карта КИУМ")
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
     st.header("Выработка электроэнергии")
     
-    # Метрики выработки
-    total_per_tg = filtered_gen[selected_months].sum(axis=1)
-    total_gen = total_per_tg.sum()
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("Общая выработка", f"{total_gen:,.0f} МВт*ч")
-    with col2:
-        avg_gen_per_tg = total_per_tg.mean()
-        st.metric("Средняя на ТГ", f"{avg_gen_per_tg:,.0f} МВт*ч")
-    with col3:
-        max_gen_tg = filtered_gen.loc[total_per_tg.idxmax(), 'ТГ']
-        st.metric("Лидер", max_gen_tg)
-    
-    # Данные и график
-    col1, col2 = st.columns([1, 2])
-    
-    with col1:
-        st.subheader("Данные выработки")
-        display_gen = filtered_gen.copy()
-        for month in selected_months:
-            display_gen[month] = display_gen[month].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+    if filtered_gen.empty:
+        st.warning("Нет данных для отображения. Выберите хотя бы один ТГ.")
+    else:
+        # Метрики выработки
+        total_per_tg = filtered_gen[selected_months].sum(axis=1)
+        total_gen = total_per_tg.sum()
         
-        st.dataframe(display_gen, use_container_width=True)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Общая выработка", f"{total_gen:,.0f} МВт*ч")
+        with col2:
+            avg_gen_per_tg = total_per_tg.mean()
+            st.metric("Средняя на ТГ", f"{avg_gen_per_tg:,.0f} МВт*ч")
+        with col3:
+            if not total_per_tg.empty:
+                max_gen_tg = filtered_gen.loc[total_per_tg.idxmax(), 'ТГ']
+                st.metric("Лидер", max_gen_tg)
+            else:
+                st.metric("Лидер", "—")
         
-        csv = filtered_gen.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            "📥 Скачать CSV", 
-            csv, 
-            "generation_data.csv",
-            help="Скачать данные выработки в формате CSV"
-        )
-    
-    with col2:
-        st.subheader("Визуализация выработки")
+        # Данные и график
+        col1, col2 = st.columns([1, 2])
         
-        chart_type = st.radio(
-            "Тип графика:",
-            ["Суммарная по ТГ", "Помесячная"],
-            horizontal=True,
-            key="gen_chart"
-        )
+        with col1:
+            st.subheader("Данные выработки")
+            display_gen = filtered_gen.copy()
+            for month in selected_months:
+                display_gen[month] = display_gen[month].apply(lambda x: f"{x:,.0f}" if pd.notnull(x) else "0")
+            
+            st.dataframe(display_gen, use_container_width=True)
+            
+            csv = filtered_gen.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                "📥 Скачать CSV", 
+                csv, 
+                "generation_data.csv",
+                help="Скачать данные выработки в формате CSV"
+            )
         
-        if chart_type == "Суммарная по ТГ":
-            fig = px.bar(x=filtered_gen['ТГ'], y=total_per_tg,
-                        title="Суммарная выработка по ТГ",
-                        labels={'x': 'Турбогенератор', 'y': 'Выработка, МВт*ч'})
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
-        else:
-            monthly_totals = filtered_gen[selected_months].sum()
-            fig = px.line(x=selected_months, y=monthly_totals,
-                         title="Общая выработка по месяцам",
-                         labels={'x': 'Месяц', 'y': 'Выработка, МВт*ч'})
-            fig.update_layout(height=400)
-            st.plotly_chart(fig, use_container_width=True)
+        with col2:
+            st.subheader("Визуализация выработки")
+            
+            chart_type = st.radio(
+                "Тип графика:",
+                ["Суммарная по ТГ", "Помесячная"],
+                horizontal=True,
+                key="gen_chart"
+            )
+            
+            if chart_type == "Суммарная по ТГ":
+                fig = px.bar(x=filtered_gen['ТГ'], y=total_per_tg,
+                            title="Суммарная выработка по ТГ",
+                            labels={'x': 'Турбогенератор', 'y': 'Выработка, МВт*ч'})
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                monthly_totals = filtered_gen[selected_months].sum()
+                fig = px.line(x=selected_months, y=monthly_totals,
+                             title="Общая выработка по месяцам",
+                             labels={'x': 'Месяц', 'y': 'Выработка, МВт*ч'})
+                fig.update_layout(height=400)
+                st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
     st.header("Анализ эффективности")
     
-    # Расчет показателей
-    total_per_tg = filtered_gen[selected_months].sum(axis=1)
-    avg_kium = filtered_kium['КИУМ_общий'].mean()
-    total_gen = total_per_tg.sum()
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Средний КИУМ", f"{avg_kium:.2%}")
-    with col2:
-        st.metric("Общая выработка", f"{total_gen:,.0f} МВт*ч")
-    with col3:
-        capacity_utilization = total_gen / (filtered_gen['N_уст'].sum() * hours_df['Часы'].sum() / len(selected_months))
-        st.metric("Использование мощностей", f"{capacity_utilization:.2%}")
-    with col4:
-        best_tg = filtered_kium.loc[filtered_kium['КИУМ_общий'].idxmax(), 'ТГ']
-        st.metric("Лучший КИУМ", best_tg)
-    
-    # Детальный анализ
-    st.subheader("Сводка по ТГ")
-    
-    analysis_df = pd.DataFrame({
-        'ТГ': filtered_gen['ТГ'].values,
-        'Выработка, МВт*ч': total_per_tg.values,
-        'КИУМ, %': (filtered_kium['КИУМ_общий'].values * 100).round(2),
-        'N уст, МВт': filtered_gen['N_уст'].values,
-        'Эффективность': (total_per_tg.values / (filtered_gen['N_уст'].values * hours_df['Часы'].sum() / len(selected_months)) * 100).round(2)
-    })
-    
-    st.dataframe(analysis_df, use_container_width=True)
-    
-    # Топ-3 ТГ
-    st.subheader("Топ-3 по выработке")
-    top_3 = total_per_tg.nlargest(3)
-    for i, (idx, value) in enumerate(top_3.items(), 1):
-        tg_name = filtered_gen.loc[idx, 'ТГ']
-        col1, col2 = st.columns([1, 4])
+    if filtered_gen.empty:
+        st.warning("Нет данных для анализа. Выберите хотя бы один ТГ.")
+    else:
+        total_per_tg = filtered_gen[selected_months].sum(axis=1)
+        avg_kium = filtered_kium['КИУМ_общий'].mean()
+        total_gen = total_per_tg.sum()
+        
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric(f"#{i}", f"{value:,.0f} МВт*ч")
+            st.metric("Средний КИУМ", f"{avg_kium:.2%}")
         with col2:
-            progress_value = float(value / top_3.max()) if top_3.max() > 0 else 0
-            st.progress(progress_value, text=f"{tg_name}")
+            st.metric("Общая выработка", f"{total_gen:,.0f} МВт*ч")
+        with col3:
+            total_hours = hours_df[hours_df['Месяц'].isin(selected_months)]['Часы'].sum()
+            capacity_utilization = total_gen / (filtered_gen['N_уст'].sum() * total_hours)
+            st.metric("Использование мощностей", f"{capacity_utilization:.2%}")
+        with col4:
+            best_tg = filtered_kium.loc[filtered_kium['КИУМ_общий'].idxmax(), 'ТГ']
+            st.metric("Лучший КИУМ", best_tg)
+        
+        # Детальный анализ
+        st.subheader("Сводка по ТГ")
+        
+        analysis_df = pd.DataFrame({
+            'ТГ': filtered_gen['ТГ'].values,
+            'Выработка, МВт*ч': total_per_tg.values,
+            'КИУМ, %': (filtered_kium['КИУМ_общий'].values * 100).round(2),
+            'N уст, МВт': filtered_gen['N_уст'].values,
+        })
+        # Рассчитываем эффективность только если N_уст > 0
+        total_hours = hours_df[hours_df['Месяц'].isin(selected_months)]['Часы'].sum()
+        analysis_df['Эффективность'] = np.where(
+            analysis_df['N уст, МВт'] > 0,
+            (analysis_df['Выработка, МВт*ч'] / (analysis_df['N уст, МВт'] * total_hours) * 100).round(2),
+            0.0
+        )
+        
+        st.dataframe(analysis_df, use_container_width=True)
+        
+        # Топ-3 ТГ
+        st.subheader("Топ-3 по выработке")
+        top_3 = total_per_tg.nlargest(3)
+        for i, (idx, value) in enumerate(top_3.items(), 1):
+            tg_name = filtered_gen.loc[idx, 'ТГ']
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                st.metric(f"#{i}", f"{value:,.0f} МВт*ч")
+            with col2:
+                progress_value = float(value / top_3.max()) if top_3.max() > 0 else 0
+                st.progress(progress_value, text=f"{tg_name}")
 
 with tab4:
     st.header("Прогнозирование выработки")
     
-    if len(selected_tgs) == 0:
+    if filtered_gen.empty:
         st.warning("Выберите хотя бы один ТГ для прогнозирования")
     else:
         tg = st.selectbox("Выберите ТГ для прогноза", selected_tgs)
         
         if tg:
             data = filtered_gen[filtered_gen['ТГ'] == tg][selected_months].T.squeeze()
-            data.index = pd.date_range(start='2025-01-01', periods=len(data), freq='M')
+            # Создаём временной индекс
+            start_date = '2025-01-01'
+            data.index = pd.date_range(start=start_date, periods=len(data), freq='MS')
             
             col1, col2 = st.columns(2)
             with col1:
@@ -556,64 +577,69 @@ with tab4:
             if st.button("Рассчитать прогноз", type="primary"):
                 with st.spinner("Построение прогноза..."):
                     try:
-                        model = ARIMA(data, order=(1,1,1)).fit()
-                        forecast = model.get_forecast(steps=forecast_steps)
-                        forecast_index = pd.date_range(start=data.index[-1] + pd.DateOffset(months=1), 
-                                                     periods=forecast_steps, freq='M')
-                        
-                        fig = go.Figure()
-                        
-                        # Исторические данные
-                        fig.add_trace(go.Scatter(
-                            x=data.index, y=data, 
-                            name='Исторические данные',
-                            line=dict(color='#1f77b4', width=2)
-                        ))
-                        
-                        # Прогноз
-                        fig.add_trace(go.Scatter(
-                            x=forecast_index, y=forecast.predicted_mean,
-                            name='Прогноз',
-                            line=dict(color='#ff7f0e', width=2, dash='dash')
-                        ))
-                        
-                        # Доверительный интервал
-                        ci = forecast.conf_int(alpha=1-confidence)
-                        fig.add_trace(go.Scatter(
-                            x=forecast_index.tolist() + forecast_index.tolist()[::-1],
-                            y=ci.iloc[:, 0].tolist() + ci.iloc[:, 1].tolist()[::-1],
-                            fill='toself',
-                            fillcolor='rgba(255, 127, 14, 0.2)',
-                            line=dict(color='rgba(255,255,255,0)'),
-                            name=f'Доверительный интервал {confidence:.0%}'
-                        ))
-                        
-                        fig.update_layout(
-                            title=f"Прогноз выработки для {tg}",
-                            xaxis_title="Дата",
-                            yaxis_title="Выработка, МВт*ч",
-                            height=500
-                        )
-                        
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                        # Прогноз в таблице
-                        st.subheader("Численные значения прогноза")
-                        forecast_df = pd.DataFrame({
-                            'Месяц': forecast_index.strftime('%B %Y'),
-                            'Прогноз, МВт*ч': forecast.predicted_mean.round(1),
-                            'Нижняя граница': ci.iloc[:, 0].round(1),
-                            'Верхняя граница': ci.iloc[:, 1].round(1)
-                        })
-                        st.dataframe(forecast_df, use_container_width=True)
-                        
+                        # Проверяем, что данные не все нули
+                        if data.sum() == 0:
+                            st.error("Невозможно построить прогноз: все значения выработки равны нулю.")
+                        else:
+                            # Простая модель ARIMA (для более точного прогноза нужна сезонность)
+                            model = ARIMA(data, order=(1,1,1)).fit()
+                            forecast = model.get_forecast(steps=forecast_steps)
+                            forecast_index = pd.date_range(start=data.index[-1] + pd.DateOffset(months=1), 
+                                                         periods=forecast_steps, freq='MS')
+                            
+                            fig = go.Figure()
+                            
+                            # Исторические данные
+                            fig.add_trace(go.Scatter(
+                                x=data.index, y=data, 
+                                name='Исторические данные',
+                                line=dict(color='#1f77b4', width=2)
+                            ))
+                            
+                            # Прогноз
+                            fig.add_trace(go.Scatter(
+                                x=forecast_index, y=forecast.predicted_mean,
+                                name='Прогноз',
+                                line=dict(color='#ff7f0e', width=2, dash='dash')
+                            ))
+                            
+                            # Доверительный интервал
+                            ci = forecast.conf_int(alpha=1-confidence)
+                            fig.add_trace(go.Scatter(
+                                x=forecast_index.tolist() + forecast_index.tolist()[::-1],
+                                y=ci.iloc[:, 0].tolist() + ci.iloc[:, 1].tolist()[::-1],
+                                fill='toself',
+                                fillcolor='rgba(255, 127, 14, 0.2)',
+                                line=dict(color='rgba(255,255,255,0)'),
+                                name=f'Доверительный интервал {confidence:.0%}'
+                            ))
+                            
+                            fig.update_layout(
+                                title=f"Прогноз выработки для {tg}",
+                                xaxis_title="Дата",
+                                yaxis_title="Выработка, МВт*ч",
+                                height=500
+                            )
+                            
+                            st.plotly_chart(fig, use_container_width=True)
+                            
+                            # Прогноз в таблице
+                            st.subheader("Численные значения прогноза")
+                            forecast_df = pd.DataFrame({
+                                'Месяц': forecast_index.strftime('%B %Y'),
+                                'Прогноз, МВт*ч': forecast.predicted_mean.round(1),
+                                'Нижняя граница': ci.iloc[:, 0].round(1),
+                                'Верхняя граница': ci.iloc[:, 1].round(1)
+                            })
+                            st.dataframe(forecast_df, use_container_width=True)
+                            
                     except Exception as e:
                         st.error(f"Ошибка при построении прогноза: {e}")
 
 with tab5:
     st.header("Анализ сценариев")
     
-    if len(selected_tgs) == 0:
+    if filtered_gen.empty:
         st.warning("Выберите хотя бы один ТГ для анализа")
     else:
         tg = st.selectbox("Выберите ТГ", selected_tgs, key="whatif_tg")
@@ -621,7 +647,7 @@ with tab5:
         if tg:
             orig_row_kium = filtered_kium[filtered_kium['ТГ'] == tg].iloc[0]
             orig_row_gen = filtered_gen[filtered_gen['ТГ'] == tg].iloc[0]
-            orig_n_уст = orig_row_gen['N_уст']
+            orig_n_ust = orig_row_gen['N_уст']
             
             col1, col2 = st.columns(2)
             
@@ -645,21 +671,26 @@ with tab5:
                         max_value=100.0,
                         key=f"kium_{month}"
                     )
+                # Для остальных месяцев по умолчанию 0
+                for month in selected_months[6:]:
+                    change_kium[month] = 0.0
             
             with col2:
                 # Расчет новых значений
-                new_n_уст = orig_n_уст * (1 + percent_change_n / 100)
+                new_n_ust = orig_n_ust * (1 + percent_change_n / 100)
+                new_n_ust = max(0, new_n_ust)  # N_уст не может быть отрицательным
                 
                 new_kium = orig_row_kium.copy()
                 for month in selected_months:
                     change = change_kium.get(month, 0.0)
-                    new_kium[month] = max(0, orig_row_kium[month] * (1 + change / 100))
+                    new_val = orig_row_kium[month] * (1 + change / 100)
+                    new_kium[month] = max(0.0, min(1.0, new_val))  # Ограничиваем [0, 1]
                 new_kium['КИУМ_общий'] = new_kium[selected_months].mean()
                 
                 hours_monthly = hours_df.set_index('Месяц')['Часы']
-                new_gen = pd.Series(index=selected_months)
+                new_gen = pd.Series(index=selected_months, dtype=float)
                 for month in selected_months:
-                    new_gen[month] = new_kium[month] * new_n_уст * hours_monthly[month]
+                    new_gen[month] = new_kium[month] * new_n_ust * hours_monthly[month]
                 new_gen_total = new_gen.sum()
                 
                 orig_gen = orig_row_gen[selected_months]
@@ -668,14 +699,23 @@ with tab5:
                 # Отображение результатов
                 st.subheader("Результаты сценария")
                 
+                # Обработка деления на ноль
+                kium_change_pct = 0.0
+                if orig_row_kium['КИУМ_общий'] > 0:
+                    kium_change_pct = (new_kium['КИУМ_общий'] - orig_row_kium['КИУМ_общий']) / orig_row_kium['КИУМ_общий'] * 100
+                
+                gen_change_pct = 0.0
+                if orig_gen_total > 0:
+                    gen_change_pct = (new_gen_total - orig_gen_total) / orig_gen_total * 100
+                
                 results_df = pd.DataFrame({
                     'Параметр': ['N_уст, МВт', 'Средний КИУМ', 'Общая выработка, МВт*ч'],
-                    'Базовый': [orig_n_уст, f"{orig_row_kium['КИУМ_общий']:.2%}", f"{orig_gen_total:,.0f}"],
-                    'Сценарий': [f"{new_n_уст:.1f}", f"{new_kium['КИУМ_общий']:.2%}", f"{new_gen_total:,.0f}"],
+                    'Базовый': [orig_n_ust, f"{orig_row_kium['КИУМ_общий']:.2%}", f"{orig_gen_total:,.0f}"],
+                    'Сценарий': [f"{new_n_ust:.1f}", f"{new_kium['КИУМ_общий']:.2%}", f"{new_gen_total:,.0f}"],
                     'Изменение': [
                         f"{percent_change_n:+.1f}%",
-                        f"{(new_kium['КИУМ_общий'] - orig_row_kium['КИУМ_общий']) / orig_row_kium['КИУМ_общий'] * 100:+.1f}%",
-                        f"{(new_gen_total - orig_gen_total) / orig_gen_total * 100:+.1f}%"
+                        f"{kium_change_pct:+.1f}%",
+                        f"{gen_change_pct:+.1f}%"
                     ]
                 })
                 
@@ -701,37 +741,56 @@ with tab6:
     with col1:
         st.subheader("Добавить новые данные")
         
-        data_type = st.selectbox("Тип данных", ['КИУМ', 'Выработка'])
-        tg_name = st.text_input("Наименование ТГ")
+        data_type = st.selectbox("Тип данных", ['Выработка'])  # КИУМ рассчитывается автоматически
+        tg_name = st.text_input("Наименование ТГ", placeholder="Например: ТГ-8")
         
         if tg_name:
             st.write("Введите данные по месяцам:")
-            col1, col2, col3 = st.columns(3)
+            col1a, col2a, col3a = st.columns(3)
             new_data = {}
             
-            with col1:
+            with col1a:
                 for month in months[:4]:
                     new_data[month] = st.number_input(month, value=0.0, key=f"new_{month}")
-            with col2:
+            with col2a:
                 for month in months[4:8]:
                     new_data[month] = st.number_input(month, value=0.0, key=f"new_{month}")
-            with col3:
+            with col3a:
                 for month in months[8:]:
                     new_data[month] = st.number_input(month, value=0.0, key=f"new_{month}")
             
-            if data_type == 'Выработка':
-                n_ust = st.number_input("N уст (МВт)", value=0.0)
+            n_ust = st.number_input("N уст (МВт)", value=0.0, min_value=0.0)
             
             if st.button("Добавить данные", type="primary"):
-                if data_type == 'КИУМ':
-                    new_row = pd.DataFrame([{'ТГ': tg_name, **new_data, 'КИУМ_общий': np.mean(list(new_data.values()))}])
-                    st.session_state.kium_df = pd.concat([st.session_state.kium_df, new_row], ignore_index=True)
-                    st.success(f"Данные КИУМ для {tg_name} добавлены")
+                if n_ust <= 0:
+                    st.error("N уст должно быть положительным числом")
                 else:
-                    new_row = pd.DataFrame([{'ТГ': tg_name, **new_data, 'N_уст': n_ust}])
-                    st.session_state.gen_df = pd.concat([st.session_state.gen_df, new_row], ignore_index=True)
-                    st.success(f"Данные выработки для {tg_name} добавлены")
-                st.rerun()
+                    # Добавляем в gen_df
+                    new_row_gen = pd.DataFrame([{'ТГ': tg_name, **new_data, 'N_уст': n_ust}])
+                    st.session_state.gen_df = pd.concat([st.session_state.gen_df, new_row_gen], ignore_index=True)
+                    
+                    # Пересчитываем kium_df
+                    gen_df = st.session_state.gen_df
+                    kium_data = []
+                    for _, row in gen_df.iterrows():
+                        monthly_kium = []
+                        for month in months:
+                            hours = hours_df.loc[hours_df['Месяц'] == month, 'Часы'].values[0]
+                            if row['N_уст'] > 0 and hours > 0:
+                                kium_val = row[month] / (row['N_уст'] * hours)
+                                kium_val = max(0.0, min(1.0, kium_val))
+                            else:
+                                kium_val = 0.0
+                            monthly_kium.append(kium_val)
+                        kium_data.append({
+                            'ТГ': row['ТГ'],
+                            **dict(zip(months, monthly_kium)),
+                            'КИУМ_общий': np.mean(monthly_kium)
+                        })
+                    st.session_state.kium_df = pd.DataFrame(kium_data)
+                    
+                    st.success(f"Данные для {tg_name} добавлены")
+                    st.rerun()
     
     with col2:
         st.subheader("Текущие данные")
@@ -754,11 +813,10 @@ with tab6:
         st.write("""
         **АТЭЦ Аналитика** - система мониторинга и анализа работы турбогенераторов.
         
-        Возможности:
-        • Отслеживание КИУМ в реальном времени
-        • Анализ выработки электроэнергии
-        • Прогнозирование показателей
-        • Анализ сценариев
+        Особенности:
+        • КИУМ рассчитывается автоматически из выработки и N_уст
+        • Все данные согласованы физически
+        • Прогнозирование и анализ сценариев
         
         Для связи: example@company.com
         """)
@@ -767,7 +825,7 @@ with tab6:
 st.divider()
 st.markdown(
     "<div style='text-align: center; color: #666; font-size: 0.9rem;'>"
-    "АТЭЦ Аналитика • v1.0 • 2024"
+    "АТЭЦ Аналитика • v1.1 • 2024"
     "</div>",
     unsafe_allow_html=True
 )
