@@ -20,8 +20,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Текстовые данные из документа (для дефолта)
-text_data = """
+# Текстовые данные из документа (для дефолта) - выносим в отдельную переменную
+TEXT_DATA = """
 row3: ТГ-1,0.7328471198156682,0.8120683673469389,0.775663133640553,0.7069816666666666,0.6136569124423963,0.23684261904761905,0.5779423963133641,0,0,0,0,0,0.3691946281800391
 row4: ТГ-2,0.8102637096774193,0.944525,0.8871923963133641,0.3771666666666667,0.5168207373271889,0.28462190476190474,0.5132366359447005,0,0,0,0,0,0.3585021232876712
 row5: ТГ-3,0.3024148233486943,0.9418595238095238,0.6418884792626729,0.4908720634920635,0.3746497695852534,0.6992368253968254,0.6340451612903226,0,0,0,0,0,0.3359404892367906
@@ -41,7 +41,6 @@ row18: ТГ-7,19727.532,18906.786,17595.426,8408.034,11336.46,4649.136,0,,,,,,30
 months = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь']
 
 # Функция для парсинга данных из текстового представления
-@st.cache_data
 def parse_data_from_text(text_data):
     lines = text_data.strip().split('\n')
     
@@ -125,6 +124,11 @@ def parse_data_from_text(text_data):
     
     return kium_df, gen_df, hours_df
 
+# Кэшируем функцию парсинга
+@st.cache_data
+def get_parsed_data():
+    return parse_data_from_text(TEXT_DATA)
+
 # Профессиональный CSS для строгого интерфейса
 st.markdown("""
     <style>
@@ -176,6 +180,10 @@ st.markdown("""
     .stButton > button:hover {
         background-color: #f0f0f0;
         border-color: #a0a0a0;
+    }
+    
+    .stButton > button:focus {
+        box-shadow: 0 0 0 2px rgba(0,0,0,0.1);
     }
     
     /* Селекты и инпуты */
@@ -278,19 +286,12 @@ st.markdown("""
             margin: 0.5rem 0;
         }
     }
-    
-    /* Компактный режим для таблиц */
-    .compact-table .dataframe td,
-    .compact-table .dataframe th {
-        padding: 0.25rem 0.5rem;
-        font-size: 0.875rem;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 # Инициализация session state
 if 'kium_df' not in st.session_state:
-    kium_df, gen_df, hours_df = parse_data_from_text(text_data)
+    kium_df, gen_df, hours_df = get_parsed_data()
     st.session_state.kium_df = kium_df
     st.session_state.gen_df = gen_df
     st.session_state.hours_df = hours_df
@@ -310,7 +311,7 @@ with st.sidebar:
     uploaded_file = st.file_uploader("Загрузить Excel файл", type=['xlsx'], 
                                    help="Загрузите файл с данными за 2025 год")
     
-    if uploaded_file:
+    if uploaded_file is not None:
         try:
             kium_df = pd.read_excel(uploaded_file, sheet_name='2025', skiprows=1, nrows=7, usecols='A:N')
             kium_df.columns = ['ТГ'] + months + ['КИУМ_общий']
@@ -383,10 +384,12 @@ with tab1:
     
     with col1:
         st.subheader("Данные")
-        st.dataframe(filtered_kium.style.format({
-            **{month: "{:.2%}" for month in selected_months},
-            'КИУМ_общий': "{:.2%}"
-        }), use_container_width=True)
+        display_kium = filtered_kium.copy()
+        for month in selected_months:
+            display_kium[month] = display_kium[month].apply(lambda x: f"{x:.2%}")
+        display_kium['КИУМ_общий'] = display_kium['КИУМ_общий'].apply(lambda x: f"{x:.2%}")
+        
+        st.dataframe(display_kium, use_container_width=True)
         
         csv = filtered_kium.to_csv(index=False).encode('utf-8')
         st.download_button(
@@ -529,7 +532,8 @@ with tab3:
         with col1:
             st.metric(f"#{i}", f"{value:,.0f} МВт*ч")
         with col2:
-            st.progress(value / top_3.max(), text=f"{tg_name}")
+            progress_value = float(value / top_3.max()) if top_3.max() > 0 else 0
+            st.progress(progress_value, text=f"{tg_name}")
 
 with tab4:
     st.header("Прогнозирование выработки")
@@ -736,12 +740,14 @@ with tab6:
         for tg in kium_df['ТГ'].unique():
             st.write(f"• {tg}")
         
-        st.download_button(
-            "📊 Скачать все данные",
-            "",  # Здесь можно добавить объединенный файл
-            "atec_data_export.xlsx",
-            help="Скачать полный набор данных"
-        )
+        # Кнопка для сброса к исходным данным
+        if st.button("Сбросить к исходным данным"):
+            kium_df, gen_df, hours_df = get_parsed_data()
+            st.session_state.kium_df = kium_df
+            st.session_state.gen_df = gen_df
+            st.session_state.hours_df = hours_df
+            st.success("Данные сброшены к исходным")
+            st.rerun()
         
         st.divider()
         st.subheader("О системе")
